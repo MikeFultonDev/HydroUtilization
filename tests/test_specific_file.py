@@ -34,7 +34,7 @@ def run_test():
         
         # Run the script with the specific file and --nodisplay
         result = subprocess.run(
-            ['python3', 'generate_hourly_graph.py', str(tmp_file), '--nodisplay'],
+            ['python3', 'generate_consumption_graph.py', str(tmp_file), '--nodisplay'],
             capture_output=True,
             text=True,
             timeout=30

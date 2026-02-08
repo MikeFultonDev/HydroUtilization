@@ -1,11 +1,13 @@
-# BC Hydro Electricity Utilization Analyzer
+# BC Hydro Electricity Consumption Analyzer
 
-A Python application that generates visual analysis of electricity consumption data from BC Hydro, overlaying temperature data to show correlations between weather and energy usage.
+A Python application that generates visual analysis of electricity consumption data (hourly or daily) from BC Hydro, overlaying temperature data to show correlations between weather and energy usage.
 
 ## Features
 
-- **Hourly Consumption Analysis**: Visualizes electricity usage by hour of the day
-- **Temperature Overlay**: Displays outdoor temperature data alongside consumption
+- **Flexible Analysis**: Automatically detects and processes both hourly and daily consumption data
+- **Hourly Analysis**: Visualizes electricity usage by hour of the day
+- **Daily Analysis**: Visualizes electricity usage by day of the month
+- **Temperature Overlay**: Displays outdoor temperature data alongside consumption (hourly or daily average)
 - **Automatic File Detection**: Intelligently finds BC Hydro CSV files in the `input/` directory
 - **Organized Output**: Saves graphs to the `output/` directory with matching filenames
 - **Automatic Display**: Opens the generated graph automatically (optional)
@@ -57,25 +59,32 @@ HydroUtilization/
 
 ### Basic Usage (Auto-detect CSV file)
 
-Place your BC Hydro CSV file in the `input/` directory, then run:
+Place your BC Hydro CSV file (hourly or daily) in the `input/` directory, then run:
 
 ```bash
-python3 generate_hourly_graph.py
+python3 generate_consumption_graph.py
 ```
 
-The script will automatically find and process any file matching the pattern `bchydro.com-consumption-*.csv` in the `input/` directory and display the resulting graph.
+The script will automatically:
+- Find any file matching the pattern `bchydro.com-consumption-*.csv` in the `input/` directory
+- Detect whether it's hourly or daily data
+- Generate the appropriate graph and display it
 
 ### Specify a Specific File
 
 To process a specific CSV file:
 
 ```bash
-python3 generate_hourly_graph.py input/your-file.csv
+python3 generate_consumption_graph.py input/your-file.csv
 ```
 
-Example:
+Examples:
 ```bash
-python3 generate_hourly_graph.py input/bchydro.com-consumption-XXXXXXXX0385-2026-02-07-154641.csv
+# Process hourly data
+python3 generate_consumption_graph.py input/bchydro.com-consumption-XXXXXXXX0385-2026-02-07-154641.csv
+
+# Process daily data
+python3 generate_consumption_graph.py input/bchydro.com-daily-consumption.csv
 ```
 
 ### Display Options
@@ -84,13 +93,13 @@ By default, the graph is automatically opened after creation. You can control th
 
 ```bash
 # Generate and display the graph (default)
-python3 generate_hourly_graph.py
+python3 generate_consumption_graph.py
 
 # Generate without displaying
-python3 generate_hourly_graph.py --nodisplay
+python3 generate_consumption_graph.py --nodisplay
 
 # Explicitly request display
-python3 generate_hourly_graph.py --display
+python3 generate_consumption_graph.py --display
 ```
 
 ### Get Help
@@ -98,7 +107,7 @@ python3 generate_hourly_graph.py --display
 Display usage information:
 
 ```bash
-python3 generate_hourly_graph.py --help
+python3 generate_consumption_graph.py --help
 ```
 
 ### Multiple Files Handling
@@ -111,7 +120,7 @@ Error: Multiple files found matching pattern 'input/bchydro.com-consumption-*.cs
   - input/bchydro.com-consumption-file2.csv
 
 Please specify which file to process as a command-line argument:
-  python3 generate_hourly_graph.py <filename>
+  python3 generate_consumption_graph.py <filename>
 ```
 
 ## Output
@@ -122,24 +131,31 @@ The script generates PNG files in the `output/` directory with the same base nam
 - **Output**: `output/bchydro.com-consumption-XXXXXXXX0385-2026-02-07-154641.png`
 
 Each graph shows:
-- Blue bars: Net electricity consumption (kWh) per hour
-- Red line: Outdoor temperature (°C) per hour
-- Location and date information in the title
+- Blue bars: Net electricity consumption (kWh) per period (hour or day)
+- Red line: Outdoor temperature (°C) - hourly or daily average
+- Location and date/date range information in the title
+- Title indicates whether data is "Hourly" or "Daily"
 
 ## CSV File Format
 
 The script expects BC Hydro consumption CSV files with the following columns:
-- `Interval Start Date/Time`: Timestamp for each hourly reading
+- `Interval Start Date/Time`: Timestamp for each reading
+  - Hourly format: `YYYY-MM-DD HH:MM` (e.g., "2026-02-06 14:00")
+  - Daily format: `YYYY-MM-DD` (e.g., "2025-08-01")
 - `Net Consumption (kWh)`: Electricity consumption in kilowatt-hours
 - `Service Address`: Property address
 - `City`: City name
+
+The script automatically detects the format based on the timestamp.
 
 ## Weather Data
 
 Temperature data is automatically fetched from the Open-Meteo API (free, no API key required) based on:
 - Location extracted from the CSV file
-- Date of the consumption data
+- Date or date range of the consumption data
 - Coordinates for Brackendale, BC (can be modified in the script for other locations)
+- For hourly data: Fetches hourly temperatures
+- For daily data: Fetches daily average temperatures
 
 ## Troubleshooting
 
@@ -171,7 +187,7 @@ If weather data cannot be fetched, the script will continue and generate the gra
 
 ### Modify Location Coordinates
 
-To change the location for weather data (lines 82-83 in `generate_hourly_graph.py`):
+To change the location for weather data (around line 240 in `generate_consumption_graph.py`):
 
 ```python
 latitude = 49.7833   # Your latitude
@@ -197,7 +213,7 @@ pip install pandas matplotlib requests
 cp ~/Downloads/bchydro.com-consumption-*.csv input/
 
 # 3. Run the script (graph will open automatically)
-python3 generate_hourly_graph.py
+python3 generate_consumption_graph.py
 
 # 4. Find your output in the output directory
 ls output/
@@ -231,8 +247,10 @@ python3 run_tests.py test_help
 ### Available Tests
 
 - **test_help.py**: Validates help display functionality
-- **test_auto_detect.py**: Tests automatic CSV file detection
-- **test_specific_file.py**: Tests processing files from arbitrary locations
+- **test_auto_detect.py**: Tests automatic CSV file detection (hourly data)
+- **test_specific_file.py**: Tests processing files from arbitrary locations (hourly data)
+
+The test suite currently validates hourly data processing. Daily data processing has been manually verified.
 
 For more information about testing, see [tests/README.md](tests/README.md).
 

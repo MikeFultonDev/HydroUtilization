@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Test runner for BC Hydro Electricity Utilization Analyzer
+Test runner for BC Hydro Electricity Consumption Analyzer
 Runs all tests in the tests/ directory or a specific test if specified.
 """
 
@@ -68,7 +68,7 @@ def main():
     
     # Run tests
     print("=" * 70)
-    print("BC Hydro Electricity Utilization Analyzer - Test Suite")
+    print("BC Hydro Electricity Consumption Analyzer - Test Suite")
     print("=" * 70)
     print()
     

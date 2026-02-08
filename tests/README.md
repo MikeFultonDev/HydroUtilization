@@ -1,6 +1,6 @@
-# Test Suite for BC Hydro Electricity Utilization Analyzer
+# Test Suite for BC Hydro Electricity Consumption Analyzer
 
-This directory contains automated tests to ensure the application functions correctly.
+This directory contains automated tests to ensure the application functions correctly for both hourly and daily consumption data.
 
 ## Running Tests
 
@@ -49,7 +49,7 @@ Tests that the script automatically detects and processes the CSV file in the `i
 
 **Validates:**
 - CSV file is found in `input/` directory
-- File is processed successfully
+- File is processed successfully (hourly data)
 - Output PNG is created in `output/` directory
 - `--nodisplay` option prevents graph display
 - Exit code is 0
@@ -59,11 +59,13 @@ Tests that the script can process a specific CSV file from an arbitrary location
 
 **Validates:**
 - File is copied to `/tmp/hourly.csv`
-- Script processes the specified file
+- Script processes the specified file (hourly data)
 - Output PNG is created with correct name (`output/hourly.png`)
 - `--nodisplay` option prevents graph display
 - Cleanup occurs after test
 - Exit code is 0
+
+**Note:** Current tests validate hourly data processing. Daily data processing has been manually verified and works correctly.
 
 ## Test Output
 
@@ -71,7 +73,7 @@ Tests provide clear pass/fail status:
 
 ```
 ======================================================================
-BC Hydro Electricity Utilization Analyzer - Test Suite
+BC Hydro Electricity Consumption Analyzer - Test Suite
 ======================================================================
 
 ✓ PASS: test_help
@@ -119,7 +121,7 @@ def run_test():
     try:
         # Test implementation
         result = subprocess.run(
-            ['python3', 'generate_hourly_graph.py', '--some-option'],
+            ['python3', 'generate_consumption_graph.py', '--some-option'],
             capture_output=True,
             text=True,
             timeout=30

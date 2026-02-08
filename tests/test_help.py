@@ -16,7 +16,7 @@ def run_test():
     try:
         # Run the script with -? option
         result = subprocess.run(
-            ['python3', 'generate_hourly_graph.py', '-?'],
+            ['python3', 'generate_consumption_graph.py', '-?'],
             capture_output=True,
             text=True,
             timeout=10
@@ -29,7 +29,7 @@ def run_test():
         # Check that help text is displayed
         output = result.stdout
         expected_strings = [
-            "BC Hydro Electricity Utilization Analyzer",
+            "BC Hydro Electricity Consumption Analyzer",
             "USAGE:",
             "OPTIONS:",
             "-help, --help, -?",
