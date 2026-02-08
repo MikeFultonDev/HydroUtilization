@@ -132,14 +132,17 @@ def process_hourly_data(df):
 
 def process_daily_data(df):
     """Process daily consumption data."""
-    df['Date'] = pd.to_datetime(df['Interval Start Date/Time']).dt.date
-    df['Day'] = pd.to_datetime(df['Interval Start Date/Time']).dt.day
+    df['Date'] = pd.to_datetime(df['Interval Start Date/Time'])
     
-    # Use day of month as the period
-    consumption_data = df[['Day', 'Net Consumption (kWh)']].copy()
-    consumption_data.columns = ['Period', 'Net Consumption (kWh)']
+    # Create sequential day numbers starting from 0
+    df = df.sort_values('Date')
+    df['DayIndex'] = range(len(df))
     
-    return consumption_data, df['Date'].iloc[0], df['Date'].iloc[-1]
+    # Keep the date for labeling
+    consumption_data = df[['DayIndex', 'Net Consumption (kWh)', 'Date']].copy()
+    consumption_data.columns = ['Period', 'Net Consumption (kWh)', 'Date']
+    
+    return consumption_data, df['Date'].iloc[0].date(), df['Date'].iloc[-1].date()
 
 def fetch_hourly_temperature(latitude, longitude, date):
     """Fetch hourly temperature data for a specific date."""
@@ -185,8 +188,9 @@ def fetch_daily_temperature(latitude, longitude, start_date, end_date):
         if 'daily' in weather_data:
             dates = pd.to_datetime(weather_data['daily']['time'])
             temperatures = weather_data['daily']['temperature_2m_mean']
-            days = [d.day for d in dates]
-            return pd.DataFrame({'Period': days, 'Temperature': temperatures})
+            # Create sequential day indices
+            day_indices = list(range(len(dates)))
+            return pd.DataFrame({'Period': day_indices, 'Temperature': temperatures, 'Date': dates})
         return None
     except Exception as e:
         print(f"Warning: Error fetching weather data: {e}")
@@ -249,8 +253,14 @@ else:
 if temp_df is None:
     print("Warning: Could not fetch weather data, proceeding without temperature overlay")
 
-# Create figure with dual y-axes
-fig, ax1 = plt.subplots(figsize=(14, 6))
+# Create figure with dual y-axes - make it wider for daily data
+if interval_type == 'daily':
+    num_days = len(consumption_data)
+    # Use wider figure for daily data (at least 0.3 inches per day, minimum 14 inches)
+    fig_width = max(14, num_days * 0.3)
+    fig, ax1 = plt.subplots(figsize=(fig_width, 6))
+else:
+    fig, ax1 = plt.subplots(figsize=(14, 6))
 
 # Plot consumption bars on primary y-axis
 color_consumption = 'steelblue'
@@ -265,7 +275,20 @@ ax1.grid(axis='y', alpha=0.3, linestyle='--')
 if interval_type == 'hourly':
     ax1.set_xticks(range(0, 24))
 else:
-    ax1.set_xticks(consumption_data['Period'])
+    # For daily data, show date labels
+    # Show every Nth day to avoid overcrowding
+    num_days = len(consumption_data)
+    if num_days <= 31:
+        tick_interval = 1
+    elif num_days <= 90:
+        tick_interval = 7  # Weekly
+    else:
+        tick_interval = 14  # Bi-weekly
+    
+    tick_positions = consumption_data['Period'][::tick_interval]
+    tick_labels = [d.strftime('%m-%d') for d in consumption_data['Date'][::tick_interval]]
+    ax1.set_xticks(tick_positions)
+    ax1.set_xticklabels(tick_labels, rotation=45, ha='right')
 
 # Add value labels on top of each bar
 for i, row in consumption_data.iterrows():
