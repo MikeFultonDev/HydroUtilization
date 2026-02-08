@@ -35,7 +35,9 @@ python3 run_tests.py test_help.py
 
 ## Available Tests
 
-### test_help.py
+### Hourly Data Tests
+
+#### test_help.py
 Tests that the help option (`-?`, `--help`, `-help`) displays help information and exits without processing any files.
 
 **Validates:**
@@ -44,28 +46,64 @@ Tests that the help option (`-?`, `--help`, `-help`) displays help information a
 - No file processing occurs
 - Exit code is 0
 
-### test_auto_detect.py
-Tests that the script automatically detects and processes the CSV file in the `input/` directory when no file is specified.
+#### test_auto_detect.py
+Tests that the script automatically detects and processes hourly CSV file in the `input/` directory when no file is specified.
 
 **Validates:**
 - CSV file is found in `input/` directory
 - File is processed successfully (hourly data)
+- Hourly interval type detected
 - Output PNG is created in `output/` directory
 - `--nodisplay` option prevents graph display
 - Exit code is 0
 
-### test_specific_file.py
-Tests that the script can process a specific CSV file from an arbitrary location (uses `/tmp/hourly.csv`).
+#### test_specific_file.py
+Tests that the script can process a specific hourly CSV file from an arbitrary location (uses `/tmp/hourly.csv`).
 
 **Validates:**
 - File is copied to `/tmp/hourly.csv`
 - Script processes the specified file (hourly data)
+- Hourly interval type detected
 - Output PNG is created with correct name (`output/hourly.png`)
 - `--nodisplay` option prevents graph display
 - Cleanup occurs after test
 - Exit code is 0
 
-**Note:** Current tests validate hourly data processing. Daily data processing has been manually verified and works correctly.
+### Daily Data Tests
+
+#### test_daily_auto_detect.py
+Tests that the script processes daily CSV file with explicit file specification.
+
+**Validates:**
+- Daily CSV file exists in `input/` directory
+- File is processed successfully (daily data)
+- Daily interval type detected
+- Output PNG is created in `output/` directory
+- `--nodisplay` option prevents graph display
+- Exit code is 0
+
+#### test_daily_explicit.py
+Tests that the script processes daily CSV file when explicitly specified by path.
+
+**Validates:**
+- Daily CSV file is processed with explicit path
+- Daily interval type detected
+- Output PNG is created with correct name
+- Output file size is reasonable (>10KB)
+- `--nodisplay` option prevents graph display
+- Exit code is 0
+
+#### test_daily_specific_file.py
+Tests that the script can process a specific daily CSV file from an arbitrary location (uses `/tmp/daily.csv`).
+
+**Validates:**
+- File is copied to `/tmp/daily.csv`
+- Script processes the specified file (daily data)
+- Daily interval type detected
+- Output PNG is created with correct name (`output/daily.png`)
+- `--nodisplay` option prevents graph display
+- Cleanup occurs after test
+- Exit code is 0
 
 ## Test Output
 
@@ -76,18 +114,27 @@ Tests provide clear pass/fail status:
 BC Hydro Electricity Consumption Analyzer - Test Suite
 ======================================================================
 
-✓ PASS: test_help
-  Help displayed correctly without processing
-
 ✓ PASS: test_auto_detect
   Successfully auto-detected and processed bchydro.com-consumption-XXXXXXXX0385-2026-02-07-154641.csv
+
+✓ PASS: test_daily_auto_detect
+  Successfully processed daily data from bchydro.com-daily-consumption.csv
+
+✓ PASS: test_daily_explicit
+  Successfully processed daily data from bchydro.com-daily-consumption.csv
+
+✓ PASS: test_daily_specific_file
+  Successfully processed /tmp/daily.csv and created output/daily.png
+
+✓ PASS: test_help
+  Help displayed correctly without processing
 
 ✓ PASS: test_specific_file
   Successfully processed /tmp/hourly.csv and created output/hourly.png
 
 ======================================================================
-Tests run: 3
-Passed: 3
+Tests run: 6
+Passed: 6
 Failed: 0
 ======================================================================
 ```

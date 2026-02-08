@@ -246,11 +246,17 @@ python3 run_tests.py test_help
 
 ### Available Tests
 
+**Hourly Data Tests:**
 - **test_help.py**: Validates help display functionality
-- **test_auto_detect.py**: Tests automatic CSV file detection (hourly data)
-- **test_specific_file.py**: Tests processing files from arbitrary locations (hourly data)
+- **test_auto_detect.py**: Tests automatic CSV file detection
+- **test_specific_file.py**: Tests processing files from arbitrary locations
 
-The test suite currently validates hourly data processing. Daily data processing has been manually verified.
+**Daily Data Tests:**
+- **test_daily_auto_detect.py**: Tests explicit daily file processing
+- **test_daily_explicit.py**: Tests daily file with explicit path
+- **test_daily_specific_file.py**: Tests daily files from arbitrary locations
+
+All 6 tests pass successfully, validating both hourly and daily data processing.
 
 For more information about testing, see [tests/README.md](tests/README.md).
 
