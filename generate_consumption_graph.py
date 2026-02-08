@@ -26,6 +26,8 @@ OPTIONS:
     --nodisplay          Do not display the graph after creation
     --daily              Aggregate data to daily averages (for hourly data)
     --weekly             Aggregate data to weekly averages (for hourly or daily data)
+    --text               Generate text output file with consumption and temperature data
+                        (excludes partial periods)
 
 ARGUMENTS:
     CSV_FILE             Path to a specific BC Hydro consumption CSV file
@@ -38,6 +40,7 @@ DESCRIPTION:
     
     - Use --daily to convert hourly data to daily averages
     - Use --weekly to convert hourly or daily data to weekly averages
+    - Use --text to generate a tab-separated text file with the data
     
     If no CSV file is specified, the script will automatically search for files
     matching 'bchydro.com-consumption-*.csv' in the input/ directory.
@@ -310,6 +313,7 @@ def aggregate_to_weekly(df, interval_type):
 csv_file = None
 display_graph = True  # Default is to display
 aggregation = None  # None, 'daily', or 'weekly'
+text_output = False  # Generate text output
 
 for arg in sys.argv[1:]:
     # Check for help flags
@@ -323,6 +327,8 @@ for arg in sys.argv[1:]:
         aggregation = 'daily'
     elif arg == '--weekly':
         aggregation = 'weekly'
+    elif arg == '--text':
+        text_output = True
     elif not arg.startswith('--') and not arg.startswith('-'):
         csv_file = arg
 
@@ -556,6 +562,47 @@ output_file = os.path.join(output_dir, output_basename)
 plt.savefig(output_file, dpi=300, bbox_inches='tight')
 print(f"\nGraph saved as: {output_file}")
 print("Graph generation complete!")
+
+# Generate text output if requested
+if text_output:
+    text_output_file = os.path.join(output_dir, os.path.splitext(input_basename)[0] + '.txt')
+    with open(text_output_file, 'w') as f:
+        # Write header
+        f.write("Date/Time\tNet Consumption (kWh)\tTemperature (°C)\n")
+        
+        # Iterate through consumption data
+        for idx, row in consumption_data.iterrows():
+            # Skip partial periods
+            if 'IsComplete' in consumption_data.columns and not row['IsComplete']:
+                continue
+            
+            # Format date/time based on interval type
+            if interval_type == 'hourly':
+                # For hourly, show hour (0-23)
+                date_time = f"{int(row['Period']):02d}:00"
+            elif 'Date' in consumption_data.columns:
+                # For daily/weekly, show date
+                date_time = row['Date'].strftime('%Y-%m-%d')
+            else:
+                date_time = str(row['Period'])
+            
+            # Get consumption value
+            consumption = row['Net Consumption (kWh)']
+            
+            # Get temperature value if available
+            if temp_df is not None:
+                temp_row = temp_df[temp_df['Period'] == row['Period']]
+                if not temp_row.empty:
+                    temperature = f"{temp_row['Temperature'].iloc[0]:.1f}"
+                else:
+                    temperature = 'N/A'
+            else:
+                temperature = 'N/A'
+            
+            # Write line
+            f.write(f"{date_time}\t{consumption:.2f}\t{temperature}\n")
+    
+    print(f"Text output saved as: {text_output_file}")
 
 # Display the graph if requested
 if display_graph:
