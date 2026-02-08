@@ -26,6 +26,7 @@ OPTIONS:
     --nodisplay          Do not display the graph after creation
     --daily              Aggregate data to daily averages (for hourly data)
     --weekly             Aggregate data to weekly averages (for hourly or daily data)
+    --monthly            Aggregate data to monthly averages (for hourly or daily data)
     --text               Generate text output file with consumption and temperature data
                         (excludes partial periods)
 
@@ -40,6 +41,7 @@ DESCRIPTION:
     
     - Use --daily to convert hourly data to daily averages
     - Use --weekly to convert hourly or daily data to weekly averages
+    - Use --monthly to convert hourly or daily data to monthly averages
     - Use --text to generate a tab-separated text file with the data
     
     If no CSV file is specified, the script will automatically search for files
@@ -64,6 +66,9 @@ EXAMPLES:
     
     # Aggregate hourly data to weekly averages
     python3 generate_consumption_graph.py --weekly input/hourly-file.csv
+    
+    # Aggregate hourly data to monthly averages
+    python3 generate_consumption_graph.py --monthly input/hourly-file.csv
 
     # Display help
     python3 generate_consumption_graph.py --help
@@ -309,10 +314,58 @@ def aggregate_to_weekly(df, interval_type):
     
     return weekly_data, 'weekly'
 
+def aggregate_to_monthly(df, interval_type):
+    """Aggregate hourly or daily data to monthly totals."""
+    # Preserve metadata from first row
+    metadata = {
+        'City': df['City'].iloc[0],
+        'Service Address': df['Service Address'].iloc[0]
+    }
+    
+    df['DateTime'] = pd.to_datetime(df['Interval Start Date/Time'])
+    
+    # Get year-month period
+    df['YearMonth'] = df['DateTime'].dt.to_period('M')
+    
+    # Count days per month to detect partial months
+    if interval_type == 'hourly':
+        # For hourly data, count unique dates per month
+        days_per_month = df.groupby('YearMonth')['DateTime'].apply(lambda x: x.dt.date.nunique()).reset_index(name='DayCount')
+    else:
+        # For daily data, count days per month
+        days_per_month = df.groupby('YearMonth').size().reset_index(name='DayCount')
+    
+    # Calculate expected days per month
+    def expected_days(year_month):
+        return year_month.days_in_month
+    
+    days_per_month['ExpectedDays'] = days_per_month['YearMonth'].apply(expected_days)
+    
+    # Group by month and calculate monthly totals
+    monthly_data = df.groupby('YearMonth').agg({
+        'Net Consumption (kWh)': 'sum'
+    }).reset_index()
+    
+    # Merge day counts
+    monthly_data = monthly_data.merge(days_per_month, on='YearMonth')
+    
+    # Mark months as complete if they have all expected days
+    monthly_data['IsComplete'] = monthly_data['DayCount'] == monthly_data['ExpectedDays']
+    
+    # Convert YearMonth to string format YYYY-MM
+    monthly_data['MonthStr'] = monthly_data['YearMonth'].dt.strftime('%Y-%m')
+    
+    # Add back metadata
+    monthly_data['City'] = metadata['City']
+    monthly_data['Service Address'] = metadata['Service Address']
+    monthly_data['Interval Start Date/Time'] = monthly_data['MonthStr']
+    
+    return monthly_data, 'monthly'
+
 # Parse command-line arguments
 csv_file = None
 display_graph = True  # Default is to display
-aggregation = None  # None, 'daily', or 'weekly'
+aggregation = None  # None, 'daily', 'weekly', or 'monthly'
 text_output = False  # Generate text output
 
 for arg in sys.argv[1:]:
@@ -327,6 +380,8 @@ for arg in sys.argv[1:]:
         aggregation = 'daily'
     elif arg == '--weekly':
         aggregation = 'weekly'
+    elif arg == '--monthly':
+        aggregation = 'monthly'
     elif arg == '--text':
         text_output = True
     elif not arg.startswith('--') and not arg.startswith('-'):
@@ -353,6 +408,9 @@ if aggregation == 'daily' and interval_type == 'hourly':
 elif aggregation == 'weekly':
     print(f"Aggregating {interval_type} data to weekly averages")
     df, interval_type = aggregate_to_weekly(df, interval_type)
+elif aggregation == 'monthly':
+    print(f"Aggregating {interval_type} data to monthly averages")
+    df, interval_type = aggregate_to_monthly(df, interval_type)
 elif aggregation == 'daily' and interval_type == 'daily':
     print("Data is already daily, no aggregation needed")
 elif aggregation == 'daily' and interval_type == 'weekly':
@@ -368,6 +426,11 @@ elif interval_type == 'weekly':
     consumption_data, start_date, end_date = process_daily_data(df)  # Reuse daily processing
     x_label = 'Week Starting'
     title_period = 'Weekly'
+    date_range = f"{start_date} to {end_date}"
+elif interval_type == 'monthly':
+    consumption_data, start_date, end_date = process_daily_data(df)  # Reuse daily processing
+    x_label = 'Month'
+    title_period = 'Monthly'
     date_range = f"{start_date} to {end_date}"
 else:  # daily
     consumption_data, start_date, end_date = process_daily_data(df)
@@ -395,16 +458,26 @@ elif interval_type == 'weekly':
         weekly_temp = temp_df.groupby('WeekStart').agg({'Temperature': 'mean'}).reset_index()
         weekly_temp['Period'] = range(len(weekly_temp))
         temp_df = weekly_temp[['Period', 'Temperature']]
+elif interval_type == 'monthly':
+    # For monthly data, fetch daily temps and aggregate to monthly
+    temp_df = fetch_daily_temperature(latitude, longitude, start_date, end_date)
+    if temp_df is not None:
+        # Aggregate temperature to monthly averages
+        temp_df['Date'] = pd.to_datetime(temp_df['Date'])
+        temp_df['YearMonth'] = temp_df['Date'].dt.to_period('M')
+        monthly_temp = temp_df.groupby('YearMonth').agg({'Temperature': 'mean'}).reset_index()
+        monthly_temp['Period'] = range(len(monthly_temp))
+        temp_df = monthly_temp[['Period', 'Temperature']]
 else:  # daily
     temp_df = fetch_daily_temperature(latitude, longitude, start_date, end_date)
 
 if temp_df is None:
     print("Warning: Could not fetch weather data, proceeding without temperature overlay")
 
-# Create figure with dual y-axes - make it wider for daily/weekly data
-if interval_type in ['daily', 'weekly']:
+# Create figure with dual y-axes - make it wider for daily/weekly/monthly data
+if interval_type in ['daily', 'weekly', 'monthly']:
     num_periods = len(consumption_data)
-    # Use wider figure for daily/weekly data (at least 0.3 inches per period, minimum 14 inches)
+    # Use wider figure for daily/weekly/monthly data (at least 0.3 inches per period, minimum 14 inches)
     fig_width = max(14, num_periods * 0.3)
     fig, ax1 = plt.subplots(figsize=(fig_width, 8))
 else:
@@ -415,8 +488,9 @@ color_consumption = 'steelblue'
 color_consumption_dark = '#2F4F7F'  # Much darker blue for weekends/overnight
 
 # Determine if we need special shading for weekends or overnight hours
-has_weekend = 'IsWeekend' in consumption_data.columns
-has_overnight = 'IsOvernight' in consumption_data.columns
+# Only apply special shading for hourly and daily data, not weekly or monthly
+has_weekend = 'IsWeekend' in consumption_data.columns and interval_type == 'daily'
+has_overnight = 'IsOvernight' in consumption_data.columns and interval_type == 'hourly'
 
 # Check if we have IsComplete column
 if 'IsComplete' in consumption_data.columns:
@@ -456,7 +530,7 @@ if 'IsComplete' in consumption_data.columns:
                         consumption_data.loc[overnight_complete, 'Net Consumption (kWh)'],
                         color=color_consumption_dark, edgecolor='black', linewidth=0.5, alpha=0.85)
         else:
-            # No special shading needed
+            # No special shading needed (for weekly, monthly, or when no weekend/overnight data)
             ax1.bar(consumption_data.loc[complete_mask, 'Period'],
                     consumption_data.loc[complete_mask, 'Net Consumption (kWh)'],
                     color=color_consumption, edgecolor='black', linewidth=0.5, alpha=0.7,
@@ -495,6 +569,12 @@ elif interval_type == 'weekly':
     tick_labels = [d.strftime('%Y-%m-%d') for d in consumption_data['Date'][::tick_interval]]
     ax1.set_xticks(tick_positions)
     ax1.set_xticklabels(tick_labels, rotation=45, ha='right')
+elif interval_type == 'monthly':
+    # For monthly data, show YYYY-MM format
+    tick_positions = consumption_data['Period']
+    tick_labels = [d.strftime('%Y-%m') for d in consumption_data['Date']]
+    ax1.set_xticks(tick_positions)
+    ax1.set_xticklabels(tick_labels, rotation=45, ha='right')
 else:  # daily
     # For daily data, show date labels
     # Show every Nth day to avoid overcrowding
@@ -513,8 +593,13 @@ else:  # daily
 
 # Add value labels on top of each bar
 for i, row in consumption_data.iterrows():
-    ax1.text(row['Period'], row['Net Consumption (kWh)'],
-             f"{row['Net Consumption (kWh)']:.1f}",
+    consumption_value = row['Net Consumption (kWh)']
+    # Format: no decimal if >= 1000, otherwise show 1 decimal place
+    if consumption_value >= 1000:
+        label = f"{consumption_value:.0f}"
+    else:
+        label = f"{consumption_value:.1f}"
+    ax1.text(row['Period'], consumption_value, label,
              ha='center', va='bottom', fontsize=8)
 
 # Plot temperature line on secondary y-axis if available
