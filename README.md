@@ -212,6 +212,30 @@ ls output/
 | `--nodisplay` | Don't display graph after creation |
 | `<filename>` | Specify a specific CSV file to process |
 
+## Testing
+
+The project includes a comprehensive test suite to ensure functionality.
+
+### Run All Tests
+
+```bash
+python3 run_tests.py
+```
+
+### Run a Specific Test
+
+```bash
+python3 run_tests.py test_help
+```
+
+### Available Tests
+
+- **test_help.py**: Validates help display functionality
+- **test_auto_detect.py**: Tests automatic CSV file detection
+- **test_specific_file.py**: Tests processing files from arbitrary locations
+
+For more information about testing, see [tests/README.md](tests/README.md).
+
 ## License
 
 This tool is provided as-is for analyzing BC Hydro consumption data.
