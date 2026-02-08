@@ -5,9 +5,11 @@ A Python application that generates visual analysis of electricity consumption d
 ## Features
 
 - **Flexible Analysis**: Automatically detects and processes both hourly and daily consumption data
+- **Data Aggregation**: Aggregate data to coarser granularities (hourly → daily, hourly/daily → weekly)
 - **Hourly Analysis**: Visualizes electricity usage by hour of the day
-- **Daily Analysis**: Visualizes electricity usage by day of the month
-- **Temperature Overlay**: Displays outdoor temperature data alongside consumption (hourly or daily average)
+- **Daily Analysis**: Visualizes electricity usage by day
+- **Weekly Analysis**: Visualizes electricity usage by week
+- **Temperature Overlay**: Displays outdoor temperature data alongside consumption (hourly, daily average, or weekly average)
 - **Automatic File Detection**: Intelligently finds BC Hydro CSV files in the `input/` directory
 - **Organized Output**: Saves graphs to the `output/` directory with matching filenames
 - **Automatic Display**: Opens the generated graph automatically (optional)
@@ -80,12 +82,42 @@ python3 generate_consumption_graph.py input/your-file.csv
 
 Examples:
 ```bash
-# Process hourly data
+# Process hourly data (as-is)
 python3 generate_consumption_graph.py input/bchydro.com-consumption-XXXXXXXX0385-2026-02-07-154641.csv
 
-# Process daily data
+# Process daily data (as-is)
 python3 generate_consumption_graph.py input/bchydro.com-daily-consumption.csv
+
+# Aggregate hourly data to daily totals
+python3 generate_consumption_graph.py --daily input/bchydro.com-consumption-XXXXXXXX0385-2026-02-07-154641.csv
+
+# Aggregate daily data to weekly totals
+python3 generate_consumption_graph.py --weekly input/bchydro.com-daily-consumption.csv
+
+# Aggregate hourly data to weekly totals
+python3 generate_consumption_graph.py --weekly input/bchydro.com-consumption-XXXXXXXX0385-2026-02-07-154641.csv
 ```
+
+### Aggregation Options
+
+Control how data is aggregated for visualization:
+
+```bash
+# Use native data granularity (default)
+python3 generate_consumption_graph.py input/file.csv
+
+# Aggregate hourly data to daily totals
+python3 generate_consumption_graph.py --daily input/hourly-file.csv
+
+# Aggregate to weekly totals (works with hourly or daily data)
+python3 generate_consumption_graph.py --weekly input/file.csv
+```
+
+**Aggregation Rules:**
+- `--daily`: Converts hourly data to daily totals (sum of all hours in each day)
+- `--weekly`: Converts hourly or daily data to weekly totals (sum of all days in each week, starting Monday)
+- Temperature data is automatically aggregated to match (daily average or weekly average)
+- Cannot aggregate from coarser to finer granularity (e.g., weekly → daily)
 
 ### Display Options
 
@@ -100,6 +132,9 @@ python3 generate_consumption_graph.py --nodisplay
 
 # Explicitly request display
 python3 generate_consumption_graph.py --display
+
+# Combine with aggregation
+python3 generate_consumption_graph.py --weekly --nodisplay input/file.csv
 ```
 
 ### Get Help
@@ -131,10 +166,11 @@ The script generates PNG files in the `output/` directory with the same base nam
 - **Output**: `output/bchydro.com-consumption-XXXXXXXX0385-2026-02-07-154641.png`
 
 Each graph shows:
-- Blue bars: Net electricity consumption (kWh) per period (hour or day)
-- Red line: Outdoor temperature (°C) - hourly or daily average
+- Blue bars: Net electricity consumption (kWh) per period (hour, day, or week)
+- Red line: Outdoor temperature (°C) - hourly, daily average, or weekly average
 - Location and date/date range information in the title
-- Title indicates whether data is "Hourly" or "Daily"
+- Title indicates data granularity: "Hourly", "Daily", or "Weekly"
+- X-axis labels adjusted based on data granularity
 
 ## CSV File Format
 
@@ -226,6 +262,8 @@ ls output/
 | `--help`, `-help`, `-?` | Display help message |
 | `--display` | Display graph after creation (default) |
 | `--nodisplay` | Don't display graph after creation |
+| `--daily` | Aggregate hourly data to daily totals |
+| `--weekly` | Aggregate hourly or daily data to weekly totals |
 | `<filename>` | Specify a specific CSV file to process |
 
 ## Testing

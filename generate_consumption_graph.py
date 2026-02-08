@@ -24,17 +24,24 @@ OPTIONS:
     -help, --help, -?    Display this help message and exit
     --display            Display the graph after creation (default)
     --nodisplay          Do not display the graph after creation
+    --daily              Aggregate data to daily averages (for hourly data)
+    --weekly             Aggregate data to weekly averages (for hourly or daily data)
 
 ARGUMENTS:
     CSV_FILE             Path to a specific BC Hydro consumption CSV file
                         (optional if only one matching file exists in input/)
 
 DESCRIPTION:
-    Generates a bar graph showing electricity consumption (hourly or daily) with
-    temperature overlay. The script automatically detects whether the data is
-    hourly or daily based on the timestamp format. If no CSV file is specified,
-    the script will automatically search for files matching 'bchydro.com-consumption-*.csv'
-    in the input/ directory. Output is saved to the output/ directory.
+    Generates a bar graph showing electricity consumption with temperature overlay.
+    The script automatically detects whether the data is hourly or daily based on
+    the timestamp format. You can aggregate data to coarser granularities:
+    
+    - Use --daily to convert hourly data to daily averages
+    - Use --weekly to convert hourly or daily data to weekly averages
+    
+    If no CSV file is specified, the script will automatically search for files
+    matching 'bchydro.com-consumption-*.csv' in the input/ directory.
+    Output is saved to the output/ directory.
 
 EXAMPLES:
     # Auto-detect CSV file (if only one exists in input/)
@@ -45,6 +52,15 @@ EXAMPLES:
 
     # Process without displaying the graph
     python3 generate_consumption_graph.py --nodisplay
+    
+    # Aggregate hourly data to daily averages
+    python3 generate_consumption_graph.py --daily input/hourly-file.csv
+    
+    # Aggregate daily data to weekly averages
+    python3 generate_consumption_graph.py --weekly input/daily-file.csv
+    
+    # Aggregate hourly data to weekly averages
+    python3 generate_consumption_graph.py --weekly input/hourly-file.csv
 
     # Display help
     python3 generate_consumption_graph.py --help
@@ -196,9 +212,63 @@ def fetch_daily_temperature(latitude, longitude, start_date, end_date):
         print(f"Warning: Error fetching weather data: {e}")
         return None
 
+def aggregate_to_daily(df, interval_type):
+    """Aggregate hourly data to daily totals."""
+    if interval_type != 'hourly':
+        # Already daily or will be handled elsewhere
+        return df, 'daily'
+    
+    # Preserve metadata from first row
+    metadata = {
+        'City': df['City'].iloc[0],
+        'Service Address': df['Service Address'].iloc[0]
+    }
+    
+    df['DateTime'] = pd.to_datetime(df['Interval Start Date/Time'])
+    df['Date'] = df['DateTime'].dt.date
+    
+    # Group by date and calculate daily totals (sum for consumption)
+    daily_data = df.groupby('Date').agg({
+        'Net Consumption (kWh)': 'sum'
+    }).reset_index()
+    
+    # Add back metadata
+    daily_data['City'] = metadata['City']
+    daily_data['Service Address'] = metadata['Service Address']
+    daily_data['Interval Start Date/Time'] = daily_data['Date'].astype(str)
+    
+    return daily_data, 'daily'
+
+def aggregate_to_weekly(df, interval_type):
+    """Aggregate hourly or daily data to weekly totals."""
+    # Preserve metadata from first row
+    metadata = {
+        'City': df['City'].iloc[0],
+        'Service Address': df['Service Address'].iloc[0]
+    }
+    
+    df['DateTime'] = pd.to_datetime(df['Interval Start Date/Time'])
+    
+    # Get the week start date (Monday)
+    df['WeekStart'] = df['DateTime'] - pd.to_timedelta(df['DateTime'].dt.dayofweek, unit='D')
+    df['WeekStart'] = df['WeekStart'].dt.date
+    
+    # Group by week and calculate weekly totals
+    weekly_data = df.groupby('WeekStart').agg({
+        'Net Consumption (kWh)': 'sum'
+    }).reset_index()
+    
+    # Add back metadata
+    weekly_data['City'] = metadata['City']
+    weekly_data['Service Address'] = metadata['Service Address']
+    weekly_data['Interval Start Date/Time'] = weekly_data['WeekStart'].astype(str)
+    
+    return weekly_data, 'weekly'
+
 # Parse command-line arguments
 csv_file = None
 display_graph = True  # Default is to display
+aggregation = None  # None, 'daily', or 'weekly'
 
 for arg in sys.argv[1:]:
     # Check for help flags
@@ -208,6 +278,10 @@ for arg in sys.argv[1:]:
         display_graph = False
     elif arg == '--display':
         display_graph = True
+    elif arg == '--daily':
+        aggregation = 'daily'
+    elif arg == '--weekly':
+        aggregation = 'weekly'
     elif not arg.startswith('--') and not arg.startswith('-'):
         csv_file = arg
 
@@ -225,15 +299,32 @@ df['Net Consumption (kWh)'] = pd.to_numeric(df['Net Consumption (kWh)'])
 interval_type = detect_interval_type(df)
 print(f"Detected interval type: {interval_type}")
 
-# Process data based on interval type
+# Apply aggregation if requested
+if aggregation == 'daily' and interval_type == 'hourly':
+    print(f"Aggregating hourly data to daily averages")
+    df, interval_type = aggregate_to_daily(df, interval_type)
+elif aggregation == 'weekly':
+    print(f"Aggregating {interval_type} data to weekly averages")
+    df, interval_type = aggregate_to_weekly(df, interval_type)
+elif aggregation == 'daily' and interval_type == 'daily':
+    print("Data is already daily, no aggregation needed")
+elif aggregation == 'daily' and interval_type == 'weekly':
+    print("Warning: Cannot aggregate weekly data to daily (coarser to finer)")
+
+# Process data based on interval type (after any aggregation)
 if interval_type == 'hourly':
     consumption_data, start_date, end_date = process_hourly_data(df)
     x_label = 'Hour of Day'
     title_period = 'Hourly'
     date_range = str(start_date)
+elif interval_type == 'weekly':
+    consumption_data, start_date, end_date = process_daily_data(df)  # Reuse daily processing
+    x_label = 'Week Starting'
+    title_period = 'Weekly'
+    date_range = f"{start_date} to {end_date}"
 else:  # daily
     consumption_data, start_date, end_date = process_daily_data(df)
-    x_label = 'Day of Month'
+    x_label = 'Day'
     title_period = 'Daily'
     date_range = f"{start_date} to {end_date}"
 
@@ -247,17 +338,27 @@ longitude = -123.1333
 
 if interval_type == 'hourly':
     temp_df = fetch_hourly_temperature(latitude, longitude, start_date)
-else:
+elif interval_type == 'weekly':
+    # For weekly data, fetch daily temps and aggregate to weekly
+    temp_df = fetch_daily_temperature(latitude, longitude, start_date, end_date)
+    if temp_df is not None:
+        # Aggregate temperature to weekly averages
+        temp_df['Date'] = pd.to_datetime(temp_df['Date'])
+        temp_df['WeekStart'] = temp_df['Date'] - pd.to_timedelta(temp_df['Date'].dt.dayofweek, unit='D')
+        weekly_temp = temp_df.groupby('WeekStart').agg({'Temperature': 'mean'}).reset_index()
+        weekly_temp['Period'] = range(len(weekly_temp))
+        temp_df = weekly_temp[['Period', 'Temperature']]
+else:  # daily
     temp_df = fetch_daily_temperature(latitude, longitude, start_date, end_date)
 
 if temp_df is None:
     print("Warning: Could not fetch weather data, proceeding without temperature overlay")
 
-# Create figure with dual y-axes - make it wider for daily data
-if interval_type == 'daily':
-    num_days = len(consumption_data)
-    # Use wider figure for daily data (at least 0.3 inches per day, minimum 14 inches)
-    fig_width = max(14, num_days * 0.3)
+# Create figure with dual y-axes - make it wider for daily/weekly data
+if interval_type in ['daily', 'weekly']:
+    num_periods = len(consumption_data)
+    # Use wider figure for daily/weekly data (at least 0.3 inches per period, minimum 14 inches)
+    fig_width = max(14, num_periods * 0.3)
     fig, ax1 = plt.subplots(figsize=(fig_width, 6))
 else:
     fig, ax1 = plt.subplots(figsize=(14, 6))
@@ -274,7 +375,16 @@ ax1.grid(axis='y', alpha=0.3, linestyle='--')
 # Set x-axis ticks based on interval type
 if interval_type == 'hourly':
     ax1.set_xticks(range(0, 24))
-else:
+elif interval_type == 'weekly':
+    # For weekly data, show week start dates
+    num_weeks = len(consumption_data)
+    tick_interval = 1 if num_weeks <= 12 else 2  # Show every week or every other week
+    
+    tick_positions = consumption_data['Period'][::tick_interval]
+    tick_labels = [d.strftime('%m-%d') for d in consumption_data['Date'][::tick_interval]]
+    ax1.set_xticks(tick_positions)
+    ax1.set_xticklabels(tick_labels, rotation=45, ha='right')
+else:  # daily
     # For daily data, show date labels
     # Show every Nth day to avoid overcrowding
     num_days = len(consumption_data)
