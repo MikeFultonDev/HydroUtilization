@@ -144,6 +144,12 @@ def process_hourly_data(df):
     consumption_data = df.groupby('Hour')['Net Consumption (kWh)'].sum().reset_index()
     consumption_data.columns = ['Period', 'Net Consumption (kWh)']
     
+    # Mark as complete (all 24 hours present)
+    consumption_data['IsComplete'] = True
+    
+    # Add flag for overnight hours (midnight to 6am inclusive)
+    consumption_data['IsOvernight'] = consumption_data['Period'] <= 6
+    
     return consumption_data, df['Date'].iloc[0], df['Date'].iloc[-1]
 
 def process_daily_data(df):
@@ -154,9 +160,21 @@ def process_daily_data(df):
     df = df.sort_values('Date')
     df['DayIndex'] = range(len(df))
     
-    # Keep the date for labeling
-    consumption_data = df[['DayIndex', 'Net Consumption (kWh)', 'Date']].copy()
-    consumption_data.columns = ['Period', 'Net Consumption (kWh)', 'Date']
+    # Add day of week (0=Monday, 6=Sunday)
+    df['DayOfWeek'] = df['Date'].dt.dayofweek
+    
+    # Keep the date for labeling and preserve IsComplete if it exists
+    if 'IsComplete' in df.columns:
+        consumption_data = df[['DayIndex', 'Net Consumption (kWh)', 'Date', 'IsComplete', 'DayOfWeek']].copy()
+        consumption_data.columns = ['Period', 'Net Consumption (kWh)', 'Date', 'IsComplete', 'DayOfWeek']
+    else:
+        consumption_data = df[['DayIndex', 'Net Consumption (kWh)', 'Date', 'DayOfWeek']].copy()
+        consumption_data.columns = ['Period', 'Net Consumption (kWh)', 'Date', 'DayOfWeek']
+        # Mark as complete (full days) only if not already set
+        consumption_data['IsComplete'] = True
+    
+    # Add flag for weekend days (Saturday=5, Sunday=6)
+    consumption_data['IsWeekend'] = consumption_data['DayOfWeek'] >= 5
     
     return consumption_data, df['Date'].iloc[0].date(), df['Date'].iloc[-1].date()
 
@@ -227,10 +245,19 @@ def aggregate_to_daily(df, interval_type):
     df['DateTime'] = pd.to_datetime(df['Interval Start Date/Time'])
     df['Date'] = df['DateTime'].dt.date
     
+    # Count hours per day to detect partial days
+    hours_per_day = df.groupby('Date').size().reset_index(name='HourCount')
+    
     # Group by date and calculate daily totals (sum for consumption)
     daily_data = df.groupby('Date').agg({
         'Net Consumption (kWh)': 'sum'
     }).reset_index()
+    
+    # Merge hour counts
+    daily_data = daily_data.merge(hours_per_day, on='Date')
+    
+    # Mark days as complete if they have 24 hours
+    daily_data['IsComplete'] = daily_data['HourCount'] == 24
     
     # Add back metadata
     daily_data['City'] = metadata['City']
@@ -253,10 +280,24 @@ def aggregate_to_weekly(df, interval_type):
     df['WeekStart'] = df['DateTime'] - pd.to_timedelta(df['DateTime'].dt.dayofweek, unit='D')
     df['WeekStart'] = df['WeekStart'].dt.date
     
+    # Count days per week to detect partial weeks
+    if interval_type == 'hourly':
+        # For hourly data, count unique dates per week
+        days_per_week = df.groupby('WeekStart')['DateTime'].apply(lambda x: x.dt.date.nunique()).reset_index(name='DayCount')
+    else:
+        # For daily data, count days per week
+        days_per_week = df.groupby('WeekStart').size().reset_index(name='DayCount')
+    
     # Group by week and calculate weekly totals
     weekly_data = df.groupby('WeekStart').agg({
         'Net Consumption (kWh)': 'sum'
     }).reset_index()
+    
+    # Merge day counts
+    weekly_data = weekly_data.merge(days_per_week, on='WeekStart')
+    
+    # Mark weeks as complete if they have 7 days
+    weekly_data['IsComplete'] = weekly_data['DayCount'] == 7
     
     # Add back metadata
     weekly_data['City'] = metadata['City']
@@ -359,18 +400,82 @@ if interval_type in ['daily', 'weekly']:
     num_periods = len(consumption_data)
     # Use wider figure for daily/weekly data (at least 0.3 inches per period, minimum 14 inches)
     fig_width = max(14, num_periods * 0.3)
-    fig, ax1 = plt.subplots(figsize=(fig_width, 6))
+    fig, ax1 = plt.subplots(figsize=(fig_width, 8))
 else:
-    fig, ax1 = plt.subplots(figsize=(14, 6))
+    fig, ax1 = plt.subplots(figsize=(14, 8))
 
-# Plot consumption bars on primary y-axis
+# Plot consumption bars on primary y-axis with different styles for complete/incomplete periods
 color_consumption = 'steelblue'
-ax1.bar(consumption_data['Period'], consumption_data['Net Consumption (kWh)'],
-        color=color_consumption, edgecolor='black', linewidth=0.5, alpha=0.7, label='Net Consumption')
+color_consumption_dark = '#2F4F7F'  # Much darker blue for weekends/overnight
+
+# Determine if we need special shading for weekends or overnight hours
+has_weekend = 'IsWeekend' in consumption_data.columns
+has_overnight = 'IsOvernight' in consumption_data.columns
+
+# Check if we have IsComplete column
+if 'IsComplete' in consumption_data.columns:
+    # Plot complete periods with solid bars
+    complete_mask = consumption_data['IsComplete']
+    if complete_mask.any():
+        # For daily data, separate weekdays and weekends
+        if has_weekend:
+            # Weekday complete periods
+            weekday_complete = complete_mask & ~consumption_data['IsWeekend']
+            if weekday_complete.any():
+                ax1.bar(consumption_data.loc[weekday_complete, 'Period'],
+                        consumption_data.loc[weekday_complete, 'Net Consumption (kWh)'],
+                        color=color_consumption, edgecolor='black', linewidth=0.5, alpha=0.7,
+                        label='Net Consumption (Complete)')
+            
+            # Weekend complete periods (darker)
+            weekend_complete = complete_mask & consumption_data['IsWeekend']
+            if weekend_complete.any():
+                ax1.bar(consumption_data.loc[weekend_complete, 'Period'],
+                        consumption_data.loc[weekend_complete, 'Net Consumption (kWh)'],
+                        color=color_consumption_dark, edgecolor='black', linewidth=0.5, alpha=0.85)
+        # For hourly data, separate daytime and overnight
+        elif has_overnight:
+            # Daytime complete periods
+            daytime_complete = complete_mask & ~consumption_data['IsOvernight']
+            if daytime_complete.any():
+                ax1.bar(consumption_data.loc[daytime_complete, 'Period'],
+                        consumption_data.loc[daytime_complete, 'Net Consumption (kWh)'],
+                        color=color_consumption, edgecolor='black', linewidth=0.5, alpha=0.7,
+                        label='Net Consumption (Complete)')
+            
+            # Overnight complete periods (darker)
+            overnight_complete = complete_mask & consumption_data['IsOvernight']
+            if overnight_complete.any():
+                ax1.bar(consumption_data.loc[overnight_complete, 'Period'],
+                        consumption_data.loc[overnight_complete, 'Net Consumption (kWh)'],
+                        color=color_consumption_dark, edgecolor='black', linewidth=0.5, alpha=0.85)
+        else:
+            # No special shading needed
+            ax1.bar(consumption_data.loc[complete_mask, 'Period'],
+                    consumption_data.loc[complete_mask, 'Net Consumption (kWh)'],
+                    color=color_consumption, edgecolor='black', linewidth=0.5, alpha=0.7,
+                    label='Net Consumption (Complete)')
+    
+    # Plot incomplete periods with hatched bars to indicate partial data
+    incomplete_mask = ~consumption_data['IsComplete']
+    if incomplete_mask.any():
+        ax1.bar(consumption_data.loc[incomplete_mask, 'Period'],
+                consumption_data.loc[incomplete_mask, 'Net Consumption (kWh)'],
+                color=color_consumption, edgecolor='grey', linewidth=2, alpha=0.7,
+                hatch='//', label='Net Consumption (Partial)')
+else:
+    # No completeness info, plot all as solid
+    ax1.bar(consumption_data['Period'], consumption_data['Net Consumption (kWh)'],
+            color=color_consumption, edgecolor='black', linewidth=0.5, alpha=0.7,
+            label='Net Consumption')
 ax1.set_xlabel(x_label, fontsize=12, fontweight='bold')
 ax1.set_ylabel('Net Consumption (kWh)', fontsize=12, fontweight='bold', color=color_consumption)
 ax1.tick_params(axis='y', labelcolor=color_consumption)
 ax1.grid(axis='y', alpha=0.3, linestyle='--')
+
+# Set y-axis limits to add padding at top for legend
+max_consumption = consumption_data['Net Consumption (kWh)'].max()
+ax1.set_ylim(0, max_consumption * 1.15)  # Add 15% padding at top
 
 # Set x-axis ticks based on interval type
 if interval_type == 'hourly':
@@ -381,7 +486,7 @@ elif interval_type == 'weekly':
     tick_interval = 1 if num_weeks <= 12 else 2  # Show every week or every other week
     
     tick_positions = consumption_data['Period'][::tick_interval]
-    tick_labels = [d.strftime('%m-%d') for d in consumption_data['Date'][::tick_interval]]
+    tick_labels = [d.strftime('%Y-%m-%d') for d in consumption_data['Date'][::tick_interval]]
     ax1.set_xticks(tick_positions)
     ax1.set_xticklabels(tick_labels, rotation=45, ha='right')
 else:  # daily
@@ -396,7 +501,7 @@ else:  # daily
         tick_interval = 14  # Bi-weekly
     
     tick_positions = consumption_data['Period'][::tick_interval]
-    tick_labels = [d.strftime('%m-%d') for d in consumption_data['Date'][::tick_interval]]
+    tick_labels = [d.strftime('%Y-%m-%d') for d in consumption_data['Date'][::tick_interval]]
     ax1.set_xticks(tick_positions)
     ax1.set_xticklabels(tick_labels, rotation=45, ha='right')
 
@@ -416,16 +521,22 @@ if temp_df is not None:
     ax2.set_ylabel('Temperature (°C)', fontsize=12, fontweight='bold', color=color_temp)
     ax2.tick_params(axis='y', labelcolor=color_temp)
     
+    # Set y-axis limits for temperature to add padding at top
+    min_temp = temp_df['Temperature'].min()
+    max_temp = temp_df['Temperature'].max()
+    temp_range = max_temp - min_temp
+    ax2.set_ylim(min_temp - temp_range * 0.05, max_temp + temp_range * 0.15)  # Add 15% padding at top
+    
     # Add temperature value labels
     for i, row in temp_df.iterrows():
         ax2.text(row['Period'], row['Temperature'],
                  f"{row['Temperature']:.1f}°C",
                  ha='center', va='bottom', fontsize=7, color=color_temp)
     
-    # Combine legends
+    # Combine legends with smaller font
     lines1, labels1 = ax1.get_legend_handles_labels()
     lines2, labels2 = ax2.get_legend_handles_labels()
-    ax1.legend(lines1 + lines2, labels1 + labels2, loc='upper left')
+    ax1.legend(lines1 + lines2, labels1 + labels2, loc='upper left', fontsize=9)
 
 plt.title(f'{title_period} Electricity Consumption and Temperature\n{address}, {city} - {date_range}',
           fontsize=14, fontweight='bold')
