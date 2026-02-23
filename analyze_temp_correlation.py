@@ -31,8 +31,9 @@ with tempfile.NamedTemporaryFile(mode='w', suffix='.txt', delete=False) as temp_
     temp_txt_file = temp_file.name
 
 # Run generate_consumption_graph.py with --text option
+# Add --daily flag to ensure hourly data is aggregated to daily
 result = subprocess.run(
-    ['python3', 'generate_consumption_graph.py', csv_file, '--text', '--nodisplay'],
+    ['python3', 'generate_consumption_graph.py', csv_file, '--daily', '--text', '--nodisplay'],
     capture_output=True,
     text=True
 )
@@ -133,6 +134,29 @@ output_file = os.path.join('output', output_basename)
 plt.tight_layout()
 plt.savefig(output_file, dpi=150, bbox_inches='tight')
 print(f"\nAnalysis graph saved as: {output_file}")
+
+# Display the graph
+print("Opening graph for display...")
+import subprocess
+import platform
+
+system = platform.system()
+try:
+    if system == 'Darwin':  # macOS
+        subprocess.run(['open', output_file], check=True)
+    elif system == 'Windows':
+        os.startfile(output_file)
+    elif system == 'Linux':
+        subprocess.run(['xdg-open', output_file], check=True)
+except Exception as e:
+    print(f"Could not automatically open the graph: {e}")
+
+# Clean up the temporary text file
+try:
+    os.remove(text_file)
+    print(f"Cleaned up temporary file: {text_file}")
+except Exception as e:
+    print(f"Warning: Could not remove temporary file {text_file}: {e}")
 
 # Additional analysis: categorize by temperature ranges
 print("\n" + "="*60)

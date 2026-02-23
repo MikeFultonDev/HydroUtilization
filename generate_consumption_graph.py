@@ -326,6 +326,8 @@ def aggregate_to_monthly(df, interval_type):
     
     # Get year-month period
     df['YearMonth'] = df['DateTime'].dt.to_period('M')
+    df['Year'] = df['DateTime'].dt.year
+    df['Month'] = df['DateTime'].dt.month
     
     # Count days per month to detect partial months
     if interval_type == 'hourly':
@@ -343,7 +345,9 @@ def aggregate_to_monthly(df, interval_type):
     
     # Group by month and calculate monthly totals
     monthly_data = df.groupby('YearMonth').agg({
-        'Net Consumption (kWh)': 'sum'
+        'Net Consumption (kWh)': 'sum',
+        'Year': 'first',
+        'Month': 'first'
     }).reset_index()
     
     # Merge day counts
@@ -352,15 +356,232 @@ def aggregate_to_monthly(df, interval_type):
     # Mark months as complete if they have all expected days
     monthly_data['IsComplete'] = monthly_data['DayCount'] == monthly_data['ExpectedDays']
     
+    # Filter out partial months
+    monthly_data = monthly_data[monthly_data['IsComplete']].copy()
+    
     # Convert YearMonth to string format YYYY-MM
     monthly_data['MonthStr'] = monthly_data['YearMonth'].dt.strftime('%Y-%m')
+    
+    # Check if data spans at least 2 years
+    unique_years = monthly_data['Year'].unique()
+    is_multi_year = len(unique_years) >= 2
     
     # Add back metadata
     monthly_data['City'] = metadata['City']
     monthly_data['Service Address'] = metadata['Service Address']
     monthly_data['Interval Start Date/Time'] = monthly_data['MonthStr']
+    monthly_data['IsMultiYear'] = is_multi_year
     
     return monthly_data, 'monthly'
+
+def plot_multi_year_monthly(monthly_data, temp_df, city, address, latitude, longitude, output_file, display_graph):
+    """Plot multi-year monthly data with grouped bars and multiple temperature lines."""
+    import numpy as np
+    
+    # Get unique years and months
+    years = sorted(monthly_data['Year'].unique())
+    months = range(1, 13)  # 1-12
+    
+    # Define colors for each year (cycle through if more than these)
+    color_palette = ['steelblue', 'coral', 'mediumseagreen', 'gold', 'mediumpurple', 'tomato']
+    line_styles = ['-', '--', '-.', ':']
+    
+    # Create color and line style mappings
+    year_colors = {year: color_palette[i % len(color_palette)] for i, year in enumerate(years)}
+    year_line_styles = {year: line_styles[i % len(line_styles)] for i, year in enumerate(years)}
+    
+    # Prepare data structure: dict[month][year] = consumption
+    consumption_by_month = {month: {} for month in months}
+    for _, row in monthly_data.iterrows():
+        month = row['Month']
+        year = row['Year']
+        consumption_by_month[month][year] = row['Net Consumption (kWh)']
+    
+    # Fetch and organize temperature data by year and month
+    start_date = monthly_data['YearMonth'].min().to_timestamp()
+    end_date = monthly_data['YearMonth'].max().to_timestamp()
+    
+    temp_by_year_month = {}
+    daily_temp_df = fetch_daily_temperature(latitude, longitude, start_date.date(), end_date.date())
+    if daily_temp_df is not None:
+        daily_temp_df['Date'] = pd.to_datetime(daily_temp_df['Date'])
+        daily_temp_df['Year'] = daily_temp_df['Date'].dt.year
+        daily_temp_df['Month'] = daily_temp_df['Date'].dt.month
+        daily_temp_df['YearMonth'] = daily_temp_df['Date'].dt.to_period('M')
+        
+        # Filter to only complete months that we have consumption data for
+        valid_year_months = list(monthly_data['YearMonth'])
+        daily_temp_df = daily_temp_df[daily_temp_df['YearMonth'].isin(valid_year_months)]
+        
+        # Aggregate to monthly averages
+        monthly_temp = daily_temp_df.groupby(['Year', 'Month']).agg({'Temperature': 'mean'}).reset_index()
+        for _, row in monthly_temp.iterrows():
+            year = int(row['Year'])
+            month = int(row['Month'])
+            if year not in temp_by_year_month:
+                temp_by_year_month[year] = {}
+            temp_by_year_month[year][month] = row['Temperature']
+    
+    # Create figure
+    fig, ax1 = plt.subplots(figsize=(16, 8))
+    
+    # Plot grouped bars
+    bar_width = 0.8 / len(years)  # Width of each bar within a group
+    group_gap = 0.3  # Gap between month groups
+    
+    for month_idx, month in enumerate(months):
+        # Calculate base x position for this month group
+        x_base = month_idx * (1 + group_gap)
+        
+        for year_idx, year in enumerate(years):
+            if year in consumption_by_month[month]:
+                consumption = consumption_by_month[month][year]
+                x_pos = x_base + year_idx * bar_width
+                
+                # Format label
+                if consumption >= 1000:
+                    label = f"{consumption:.0f}"
+                else:
+                    label = f"{consumption:.1f}"
+                
+                # Plot bar - add label only for first occurrence of this year
+                ax1.bar(x_pos, consumption, bar_width,
+                       color=year_colors[year], edgecolor='black', linewidth=0.5, alpha=0.7,
+                       label=f'{year} Consumption')
+                
+                # Add value label
+                ax1.text(x_pos, consumption, label,
+                        ha='center', va='bottom', fontsize=7)
+    
+    # Set up primary y-axis (consumption)
+    ax1.set_xlabel('Month', fontsize=12, fontweight='bold')
+    ax1.set_ylabel('Net Consumption (kWh)', fontsize=12, fontweight='bold', color='black')
+    ax1.tick_params(axis='y', labelcolor='black')
+    ax1.grid(axis='y', alpha=0.3, linestyle='--')
+    
+    # Set y-axis limits with padding to prevent legend overlap
+    max_consumption = max([consumption_by_month[m].get(y, 0) for m in months for y in years])
+    ax1.set_ylim(0, max_consumption * 1.25)  # Add 25% padding at top for legend
+    
+    # Set x-axis ticks and labels
+    x_tick_positions = [i * (1 + group_gap) + (len(years) - 1) * bar_width / 2 for i in range(12)]
+    ax1.set_xticks(x_tick_positions)
+    ax1.set_xticklabels([f'{m:02d}' for m in months])
+    
+    # Plot temperature lines on secondary y-axis
+    if temp_by_year_month:
+        ax2 = ax1.twinx()
+        
+        for year in years:
+            if year in temp_by_year_month:
+                # Prepare data for this year
+                x_positions = []
+                temperatures = []
+                for month_idx, month in enumerate(months):
+                    if month in temp_by_year_month[year]:
+                        x_base = month_idx * (1 + group_gap)
+                        # Position temperature point at center of year's bar
+                        year_idx = years.index(year)
+                        x_pos = x_base + year_idx * bar_width
+                        x_positions.append(x_pos)
+                        temperatures.append(temp_by_year_month[year][month])
+                
+                # Plot line with colored line but black markers
+                ax2.plot(x_positions, temperatures,
+                        color=year_colors[year], linestyle=year_line_styles[year],
+                        linewidth=2.5, marker='o', markersize=5,
+                        markerfacecolor='black', markeredgecolor='black',
+                        label=f'{year} Temperature', zorder=5)
+                
+                # Add temperature labels in black
+                for x, temp in zip(x_positions, temperatures):
+                    ax2.text(x, temp, f"{temp:.1f}°C",
+                            ha='center', va='bottom', fontsize=6, color='black')
+        
+        ax2.set_ylabel('Temperature (°C)', fontsize=12, fontweight='bold', color='black')
+        ax2.tick_params(axis='y', labelcolor='black')
+        
+        # Set y-axis limits for temperature
+        all_temps = [temp for year_data in temp_by_year_month.values() for temp in year_data.values()]
+        if all_temps:
+            min_temp = min(all_temps)
+            max_temp = max(all_temps)
+            temp_range = max_temp - min_temp
+            ax2.set_ylim(min_temp - temp_range * 0.05, max_temp + temp_range * 0.15)
+    
+    # Create custom legend organized by year in columns
+    # We want columns like: [Year1 Consumption]  [Year2 Consumption]  [Year3 Consumption]
+    #                       [Year1 Temperature]  [Year2 Temperature]  [Year3 Temperature]
+    
+    # Get unique handles/labels by removing duplicates while preserving order
+    handles1, labels1 = ax1.get_legend_handles_labels()
+    unique_consumption = {}
+    for handle, label in zip(handles1, labels1):
+        if label not in unique_consumption:
+            unique_consumption[label] = handle
+    
+    legend_handles = []
+    legend_labels = []
+    
+    # Interleave consumption and temperature for each year to create column layout
+    if temp_by_year_month:
+        handles2, labels2 = ax2.get_legend_handles_labels()
+        unique_temperature = {}
+        for handle, label in zip(handles2, labels2):
+            if label not in unique_temperature:
+                unique_temperature[label] = handle
+        
+        # Add entries in column order: Year1 Cons, Year1 Temp, Year2 Cons, Year2 Temp, ...
+        for year in years:
+            consumption_label = f'{year} Consumption'
+            temp_label = f'{year} Temperature'
+            
+            if consumption_label in unique_consumption:
+                legend_handles.append(unique_consumption[consumption_label])
+                legend_labels.append(consumption_label)
+            
+            if temp_label in unique_temperature:
+                legend_handles.append(unique_temperature[temp_label])
+                legend_labels.append(temp_label)
+    else:
+        # No temperature data, just add consumption entries
+        for year in years:
+            consumption_label = f'{year} Consumption'
+            if consumption_label in unique_consumption:
+                legend_handles.append(unique_consumption[consumption_label])
+                legend_labels.append(consumption_label)
+    
+    # Create legend with 2 rows (consumption and temperature for each year in columns)
+    ax1.legend(legend_handles, legend_labels, loc='upper left', fontsize=9, ncol=len(years))
+    
+    # Set title
+    year_range = f"{min(years)} to {max(years)}"
+    plt.title(f'Monthly Electricity Consumption and Temperature Comparison\n{address}, {city} - {year_range}',
+              fontsize=14, fontweight='bold')
+    
+    plt.tight_layout()
+    
+    # Save the graph
+    plt.savefig(output_file, dpi=300, bbox_inches='tight')
+    print(f"\nGraph saved as: {output_file}")
+    print("Graph generation complete!")
+    
+    # Display if requested
+    if display_graph:
+        print(f"Opening graph for display...")
+        import subprocess
+        import platform
+        
+        system = platform.system()
+        try:
+            if system == 'Darwin':  # macOS
+                subprocess.run(['open', output_file], check=True)
+            elif system == 'Windows':
+                os.startfile(output_file)
+            elif system == 'Linux':
+                subprocess.run(['xdg-open', output_file], check=True)
+        except Exception as e:
+            print(f"Could not automatically open the graph: {e}")
 
 # Parse command-line arguments
 csv_file = None
@@ -428,10 +649,32 @@ elif interval_type == 'weekly':
     title_period = 'Weekly'
     date_range = f"{start_date} to {end_date}"
 elif interval_type == 'monthly':
-    consumption_data, start_date, end_date = process_daily_data(df)  # Reuse daily processing
-    x_label = 'Month'
-    title_period = 'Monthly'
-    date_range = f"{start_date} to {end_date}"
+    # Check if this is multi-year monthly data
+    is_multi_year = df['IsMultiYear'].iloc[0] if 'IsMultiYear' in df.columns else False
+    
+    if is_multi_year:
+        # Handle multi-year monthly data separately
+        city = df['City'].iloc[0]
+        address = df['Service Address'].iloc[0]
+        latitude = 49.7833  # Brackendale, BC
+        longitude = -123.1333
+        
+        # Generate output filename
+        output_dir = 'output'
+        os.makedirs(output_dir, exist_ok=True)
+        input_basename = os.path.basename(csv_file)
+        output_basename = os.path.splitext(input_basename)[0] + '.png'
+        output_file = os.path.join(output_dir, output_basename)
+        
+        # Call multi-year plotting function and exit
+        plot_multi_year_monthly(df, None, city, address, latitude, longitude, output_file, display_graph)
+        sys.exit(0)
+    else:
+        # Single year or less than 2 years - use standard processing
+        consumption_data, start_date, end_date = process_daily_data(df)  # Reuse daily processing
+        x_label = 'Month'
+        title_period = 'Monthly'
+        date_range = f"{start_date} to {end_date}"
 else:  # daily
     consumption_data, start_date, end_date = process_daily_data(df)
     x_label = 'Day'
@@ -555,7 +798,7 @@ ax1.grid(axis='y', alpha=0.3, linestyle='--')
 
 # Set y-axis limits to add padding at top for legend
 max_consumption = consumption_data['Net Consumption (kWh)'].max()
-ax1.set_ylim(0, max_consumption * 1.15)  # Add 15% padding at top
+ax1.set_ylim(0, max_consumption * 1.25)  # Add 25% padding at top for legend
 
 # Set x-axis ticks based on interval type
 if interval_type == 'hourly':
